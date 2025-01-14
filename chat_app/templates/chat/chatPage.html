@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        display: flex;
+        height: 100vh;
+      }
+
+      .sidebar {
+        width: 25%;
+        background-color: #f8f8f8;
+        border-right: 1px solid #ccc;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .sidebar-header {
+        background-color: #4caf50;
+        color: white;
+        text-align: center;
+        padding: 10px;
+        font-size: 18px;
+        font-weight: bold;
+      }
+
+      .user-list {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 10px;
+      }
+
+      .user-list button {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 5px;
+        text-align: left;
+        border: none;
+        background-color: #f1f1f1;
+        cursor: pointer;
+        font-size: 16px;
+      }
+
+      .user-list button:hover {
+        background-color: #ddd;
+      }
+
+      .chat-container {
+        width: 75%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .chat-header {
+        background-color: #4caf50;
+        color: white;
+        text-align: center;
+        padding: 10px;
+        font-size: 18px;
+        font-weight: bold;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .chat-header button {
+        background-color: #ff4d4d;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        font-size: 14px;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+
+      .chat-header button:hover {
+        background-color: #e60000;
+      }
+
+      .chat-messages {
+        flex-grow: 1;
+        padding: 10px;
+        overflow-y: auto;
+        background-color: #f8f8f8;
+      }
+
+      .message {
+        margin-bottom: 10px;
+        max-width: 60%;
+        word-wrap: break-word;
+      }
+
+      .message.sent {
+        background-color: #4caf50;
+        color: white;
+        align-self: flex-end;
+        padding: 10px;
+        border-radius: 10px 10px 0 10px;
+      }
+
+      .message.received {
+        background-color: #ddd;
+        align-self: flex-start;
+        padding: 10px;
+        border-radius: 10px 10px 10px 0;
+      }
+
+      .chat-input-section {
+        display: flex;
+        border-top: 1px solid #ccc;
+        padding: 10px;
+        background-color: white;
+      }
+
+      .chat-input-section input {
+        flex-grow: 1;
+        padding: 10px;
+        font-size: 16px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+      }
+
+      .chat-input-section button {
+        padding: 10px 20px;
+        margin-left: 10px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+
+      .chat-input-section button:hover {
+        background-color: #45a049;
+      }
+    </style>
+    <meta name="csrf-token" content="{{ csrf_token }}">
+  </head>
+  <body>
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">Logged in: {{ request.user.username }}</div>
+      <p><a href="{% url 'homepage' %}">Back</a></p>
+      <div class="user-list" id="userList">
+        {% for user in users %}
+          <button onclick="selectUser('{{ user.username }}')">{{ user.username }}</button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Chat Section -->
+    <div class="chat-container">
+      <div class="chat-header">
+        <span id="chatHeader">Select a user to chat</span>
+        <button id="deleteChatButton" onclick="deleteChat()" style="display: none;">Delete Chat</button>
+      </div>
+      <div class="chat-messages" id="chatMessages"></div>
+      <div class="chat-input-section">
+        <input type="text" id="id_message_send_input" placeholder="Type a message..." />
+        <button id="id_message_send_button">Send</button>
+      </div>
+    </div>
+
+    <script>
+      let selectedUser = null;
+
+      // WebSocket Connection
+      const username = "{{ request.user.username }}";
+      const chatSocket = new WebSocket(`ws://${window.location.host}/ws/chat/{{ request.user.username }}/`);
+
+      chatSocket.onopen = function () {
+        console.log("Connected to the WebSocket.");
+      };
+
+      chatSocket.onmessage = function (e) {
+        const data = JSON.parse(e.data);
+      
+        // Check if the message is relevant to the current user
+        if (data.recipient === selectedUser || data.sender === selectedUser) {
+          const div = document.createElement("div");
+          div.className = "message " + (data.sender === "{{ request.user.username }}" ? "sent" : "received");
+          div.innerHTML = `<b>${data.sender}:</b> ${data.message}`;
+          document.getElementById("chatMessages").appendChild(div);
+          scrollToBottom();
+        }
+      
+        // Update the user list
+        const userToUpdate = data.sender === "{{ request.user.username }}" ? data.recipient : data.sender;
+        moveUserToTop(userToUpdate);
+      };
+
+      document.addEventListener("DOMContentLoaded", function () {
+        // Restore selected user from localStorage
+        const storedSelectedUser = localStorage.getItem("selectedUser");
+        const storedUserOrder = JSON.parse(localStorage.getItem("userOrder"));
+      
+        if (storedUserOrder) {
+          reorderUserList(storedUserOrder);
+        }
+      
+        if (storedSelectedUser) {
+          selectUser(storedSelectedUser);
+        }
+      });
+      
+      function selectUser(username) {
+        selectedUser = username;
+        document.getElementById("chatHeader").innerText = username;
+        document.getElementById("chatMessages").innerHTML = ""; // Clear chat
+        document.getElementById("deleteChatButton").style.display = "inline-block";
+        localStorage.setItem("selectedUser", username);
+        loadMessages(username);
+      }
+
+      async function loadMessages(username) {
+        const response = await fetch(`/get_messages/${username}/`);
+        const messages = await response.json();
+        messages.forEach((msg) => {
+          const div = document.createElement("div");
+          div.className = "message " + (msg.sender === "{{ request.user.username }}" ? "sent" : "received");
+          div.innerHTML = `<b>${msg.sender}:</b> ${msg.message}`;
+          document.getElementById("chatMessages").appendChild(div);
+        });
+        scrollToBottom();
+      }
+
+      async function deleteChat() {
+        if (!selectedUser) return;
+      
+        const confirmed = confirm(`Are you sure you want to delete the chat with ${selectedUser}?`);
+        if (confirmed) {
+          const response = await fetch(`/delete_chat/${selectedUser}/`, {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": getCookie("csrftoken") 
+            },
+          });
+          const result = await response.json();
+          if (response.status === 200) {
+            document.getElementById("chatMessages").innerHTML = "";
+            alert("Chat deleted successfully.");
+            localStorage.removeItem("selectedUser");
+            // Reset the chat header and hide delete button
+            document.getElementById("chatHeader").innerText = "Select a user to chat";
+            document.getElementById("deleteChatButton").style.display = "none";
+            selectedUser = null;
+          } else {
+            alert(result.message || "An error occurred.");
+          }
+        }
+      }
+      
+      // Utility function to get the CSRF token from the cookies
+      function getCookie(name) {
+        const cookieValue = document.cookie.match(`(^|;)\\s*${name}\\s*=\\s*([^;]+)`);
+        return cookieValue ? cookieValue.pop() : "";
+      }
+
+      function scrollToBottom() {
+        const chatMessages = document.getElementById("chatMessages");
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      document.getElementById("id_message_send_button").onclick = function () {
+        sendMessage();
+      };
+
+      document.getElementById("id_message_send_input").addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault(); // Prevent the default Enter key behavior (e.g., form submission)
+          sendMessage();
+        }
+      });
+
+      function sendMessage() {
+        const messageInput = document.getElementById("id_message_send_input").value.trim();
+        if (!selectedUser) {
+          alert("Please select a user to chat with.");
+          return;
+        }
+        if (messageInput === "") {
+          alert("Cannot send an empty message.");
+          return;
+        }
+      
+        const div = document.createElement("div");
+        div.className = "message sent";
+        div.innerHTML = `<b>{{ request.user.username }}:</b> ${messageInput}`;
+        document.getElementById("chatMessages").appendChild(div);
+        scrollToBottom();
+      
+        // Send the message through WebSocket
+        chatSocket.send(
+          JSON.stringify({
+            message: messageInput,
+            sender: "{{ request.user.username }}",
+            recipient: selectedUser,
+          })
+        );
+      
+        // Clear the input field
+        document.getElementById("id_message_send_input").value = "";
+      
+        // Move the selected user to the top
+        moveUserToTop(selectedUser);
+      }
+      
+      // Utility function to move a user to the top of the user list
+      function moveUserToTop(username) {
+        const userList = document.getElementById("userList");
+        const userButtons = Array.from(userList.children);
+      
+        // Find the button for the user
+        const userButton = userButtons.find((button) => button.textContent.trim() === username);
+      
+        if (userButton) {
+          // Remove and reinsert the button at the top
+          userList.removeChild(userButton);
+          userList.insertBefore(userButton, userList.firstChild);
+      
+          // Save the new order in localStorage
+          const updatedOrder = Array.from(userList.children).map((button) => button.textContent.trim());
+          localStorage.setItem("userOrder", JSON.stringify(updatedOrder));
+        }
+      }
+
+      function reorderUserList(order) {
+        const userList = document.getElementById("userList");
+        const userButtons = Array.from(userList.children);
+      
+        // Create a map of username to button element
+        const buttonMap = new Map(userButtons.map((button) => [button.textContent.trim(), button]));
+      
+        // Clear the user list
+        userList.innerHTML = "";
+      
+        // Append buttons in the specified order
+        order.forEach((username) => {
+          if (buttonMap.has(username)) {
+            userList.appendChild(buttonMap.get(username));
+          }
+        });
+      }
+      
+    </script>
+  </body>
+</html>
