@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
-
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -24,8 +24,8 @@ SECRET_KEY = 'django-insecure-b&q9u-5)bz0uq6wf6&*xggvo%3-b1$jy%qckhqs3s!nhv*3&@%
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
-    
-ALLOWED_HOSTS = []
+STATIC_ROOT = os.path.join(BASE_DIR, 'static/')
+ALLOWED_HOSTS = ['13.201.226.236']
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -34,6 +34,7 @@ CHANNEL_LAYERS = {
         },
     },
 }
+
 
 INSTALLED_APPS = [
     "channels",
